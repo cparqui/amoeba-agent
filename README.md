@@ -1,2 +1,44 @@
 # amoeba-agent
-Amoeba agent aims to provide a lightweight agent harness for small language models that can run fast locally. The project asks the question: how much intelligence can we squeeze out of small models in limited resource environments by building a smart harness. Then we can ask what kind of intelligence will emerge out of a colony of amoeba agents. 
+
+Amoeba is a lightweight agent harness for small language models that run fast on local hardware. It asks two questions: how much intelligence can a well-designed harness get out of small models with limited resources, and what kind of intelligence emerges from a colony of such agents?
+
+The goal is not a senior software engineer. The goal is an agent about as intelligent as an amoeba would be in a digital environment, and a foundation for building more complex agents out of many of them.
+
+## The idea
+
+- **A single cell.** Each Amoeba agent is one cell running a **perceive → model → decide → act** loop. It extends the perceive-decide-act loop from Donald Hoffman's interface theory of perception with an explicit modeling step.
+- **The world model is the interface.** The cell knows nothing about the world directly. It builds a model of subject-predicate-object relations that lets it predict and act. The model is its memory and its identity.
+- **Learning is driven by surprise.** A cell's model is doing its job if it makes the cell's next observation less surprising. Surprise decides when the cell learns new relations and when it consolidates what it already knows.
+- **Embodiment.** A launched agent process is a cell's body. Environments push observations into it and receive actions back. The first environment is a petri dish with hidden rules to discover.
+- **From cells to colonies.** Later, cells reproduce with variation, specialize, and combine into colonies. That work connects to the Celluler protocol.
+
+## Status
+
+Pre-alpha. This repository currently holds the project scaffold only.
+
+## Quickstart
+
+Requires [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync
+uv run amoeba --help
+uv run pytest
+```
+
+## Layout
+
+```
+src/amoeba/           core library
+  agent.py            the cell: PMDA loop, world model, genome (single file)
+  server.py           API process hosting one cell
+  client.py           client for a running cell
+  cli.py              the `amoeba` command
+environments/         workspace package: environments that embody cells
+  src/amoeba_environments/petri/
+tests/
+```
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](LICENSE).

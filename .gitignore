@@ -221,3 +221,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Amoeba cell state
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+cells/
