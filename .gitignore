@@ -228,3 +228,7 @@ __marimo__/
 *.db-wal
 *.db-shm
 cells/
+
+# Experiment runs and local configs
+runs/
+experiments/**/config.yaml

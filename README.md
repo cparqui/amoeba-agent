@@ -36,6 +36,8 @@ src/amoeba/           core library
   cli.py              the `amoeba` command
 environments/         workspace package: environments that embody cells
   src/amoeba_environments/petri/
+experiments/          standalone experiments from the research agenda
+  translation/        E0.0: can local models perceive into the internal language?
 tests/
 ```
 

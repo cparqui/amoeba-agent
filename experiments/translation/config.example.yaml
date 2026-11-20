@@ -1,0 +1,53 @@
+# E0.0 config. Copy to config.yaml (git-ignored) and edit.
+#
+# Each endpoint is one model behind an OpenAI-compatible server. The simplest
+# local setup is one llama-server per model, each on its own port:
+#
+#   llama-server -hf lmstudio-community/LFM2.5-350M-GGUF:Q8_0  --port 8081
+#   llama-server -hf unsloth/Qwen3.5-0.8B-GGUF:UD-Q4_K_XL      --port 8082
+#   llama-server -hf ggml-org/gemma-3-1b-it-GGUF:Q4_K_M        --port 8083
+#   llama-server -hf LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M          --port 8084
+#
+# backend: llama_cpp | vllm | openai  (decides how a grammar is sent; see backends.py)
+
+endpoints:
+  - name: lfm2.5-350m
+    base_url: http://127.0.0.1:8081/v1
+  - name: qwen3.5-0.8b
+    base_url: http://127.0.0.1:8082/v1
+    extra:
+      chat_template_kwargs: {enable_thinking: false}
+  - name: gemma3-1b
+    base_url: http://127.0.0.1:8083/v1
+  - name: lfm2.5-2.6b
+    base_url: http://127.0.0.1:8084/v1
+
+  # Ceiling: any hosted OpenAI-compatible model. Free decoding only.
+  # - name: ceiling
+  #   base_url: https://api.example.com/v1
+  #   model: some-large-model
+  #   backend: openai
+  #   api_key_env: CEILING_API_KEY
+
+  # Example vLLM endpoint (older vLLM: grammar_field: guided_grammar)
+  # - name: qwen3.5-0.8b-vllm
+  #   base_url: http://127.0.0.1:8000/v1
+  #   model: Qwen/Qwen3.5-0.8B
+  #   backend: vllm
+
+# Endpoints to translate with (default: all except the judge).
+# models: [lfm2.5-350m, qwen3.5-0.8b]
+
+# Endpoint that answers fidelity questions. Use your strongest model.
+judge: lfm2.5-2.6b
+
+syntaxes: [sexpr, prolog, json]
+lexicon_modes: [empty, seeded, evolving]   # also: seeded_evolving
+decoding: [free, constrained]
+repeats: 3
+temperature: 0.7      # > 0 so stability across repeats means something
+max_tokens: 300
+lexicon_cap: 150      # most recent symbols shown to the perceiver
+
+# A few starting predicates for the seeded modes. Everything else is learned.
+seed_lexicon: [self, at_time, at_position, has_property, part_of, moved, sees, touches]

@@ -9,6 +9,7 @@ Environments live under `environments/src/amoeba_environments/`.
 Get the loop running end to end and measure its cost before measuring learning.
 
 **Deliverables**
+- `experiments/translation/`: the standalone E0.0 run (no harness) that tests whether local models can perceive into the internal s-expression language, and sets up the first local llama.cpp models
 - PMDA loop in `agent.py`: stages, SQLite store, k-hop retrieval, relation operations
 - Scorer backed by a llama.cpp server (prompt log-probabilities), with content-token masking
 - `server.py`, `client.py`, `cli.py` implemented
@@ -23,6 +24,7 @@ Get the loop running end to end and measure its cost before measuring learning.
 - Calibration streams: fully deterministic (`H_true = 0`) and fully random (known `H_true`).
 
 **Exit criteria**
+- E0.0 Internal-language translation: a local model with parse rate ≥ 95%, paraphrase consistency ≥ 0.8 and a converging lexicon, or a decision to put a fine-tuned perceiver on the critical path
 - E0.1 Loop latency per stage: stable latency distributions; dominant stage identified
 - E0.2 Throughput and per-stage routing: a default routing configuration recorded
 - E0.3 Scoring cost versus generation cost: scoring under 20% of step time
