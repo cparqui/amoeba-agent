@@ -1,0 +1,32 @@
+{"id": "o01", "kind": "event", "content": "t=1 self at (2,3). energy=0.6.", "group": null, "novel": false, "qa": [{"q": "What is the agent's energy?", "a": ["0.6"]}]}
+{"id": "o02", "kind": "text", "content": "Food is two cells east of you.", "group": "food", "novel": false, "qa": [{"q": "In which direction is the food?", "a": ["east"]}]}
+{"id": "o03", "kind": "text", "content": "The red cup is on the table.", "group": "cup", "novel": false, "qa": [{"q": "What is the cup on?", "a": ["table"]}, {"q": "What color is the cup?", "a": ["red"]}]}
+{"id": "o04", "kind": "json", "content": "{\"t\": 2, \"hazard\": \"toxin\", \"x\": 5, \"y\": 5}", "group": "toxin", "novel": false, "qa": [{"q": "What kind of hazard is there?", "a": ["toxin"]}]}
+{"id": "o05", "kind": "event", "content": "t=2 self moved east. energy=0.55.", "group": null, "novel": false, "qa": [{"q": "Which way did the agent move?", "a": ["east"]}]}
+{"id": "o06", "kind": "text", "content": "The door is not open.", "group": "door", "novel": false, "qa": [{"q": "Is the door open?", "a": ["no", "not", "closed"]}]}
+{"id": "o07", "kind": "text", "content": "An unfamiliar shape appeared at (1,1) and is moving toward you.", "group": null, "novel": true, "qa": [{"q": "Where did the shape appear?", "a": ["(1,1)", "1,1", "1, 1"]}]}
+{"id": "o08", "kind": "event", "content": "t=3 cell_b divided; cell_b and cell_c are now adjacent to self.", "group": "divide", "novel": false, "qa": [{"q": "Which cell divided?", "a": ["cell_b", "cell b"]}]}
+{"id": "o09", "kind": "json", "content": "{\"time\": \"12:00\", \"light\": \"on\", \"event\": \"switched\"}", "group": "light", "novel": false, "qa": [{"q": "What happened to the light?", "a": ["on", "switched"]}]}
+{"id": "o10", "kind": "text", "content": "On the table sits a red cup.", "group": "cup", "novel": false, "qa": [{"q": "What is the cup on?", "a": ["table"]}]}
+{"id": "o11", "kind": "event", "content": "t=4 food detected at offset (+2,0).", "group": "food", "novel": false, "qa": [{"q": "Where is the food?", "a": ["+2", "2"]}]}
+{"id": "o12", "kind": "text", "content": "Avoid (5,5): it's poisoned.", "group": "toxin", "novel": false, "qa": [{"q": "Where is the poison?", "a": ["(5,5)", "5,5", "5, 5"]}]}
+{"id": "o13", "kind": "json", "content": "{\"door\": {\"open\": false}}", "group": "door", "novel": false, "qa": [{"q": "Is the door open?", "a": ["no", "false", "closed", "not"]}]}
+{"id": "o14", "kind": "text", "content": "The temperature rose to 31 degrees, so the agent slowed down.", "group": null, "novel": false, "qa": [{"q": "Why did the agent slow down?", "a": ["temperature", "31", "heat", "hot"]}]}
+{"id": "o15", "kind": "text", "content": "Something you have never seen before is touching the membrane.", "group": null, "novel": true, "qa": [{"q": "What is touching the membrane?", "a": ["unknown", "unidentified", "something"]}]}
+{"id": "o16", "kind": "event", "content": "t=5 light_on at 12:00.", "group": "light", "novel": false, "qa": [{"q": "When did the light turn on?", "a": ["12:00", "noon"]}]}
+{"id": "o17", "kind": "text", "content": "Cell B split in two, and both halves are right next to you.", "group": "divide", "novel": false, "qa": [{"q": "Where are the halves?", "a": ["next", "adjacent"]}]}
+{"id": "o18", "kind": "json", "content": "{\"object\": \"cup\", \"color\": \"red\", \"on\": \"table\"}", "group": "cup", "novel": false, "qa": [{"q": "What is the cup on?", "a": ["table"]}]}
+{"id": "o19", "kind": "text", "content": "Either the food moved or the sensor is wrong.", "group": null, "novel": false, "qa": [{"q": "What are the two possibilities?", "a": ["food moved", "sensor"]}]}
+{"id": "o20", "kind": "event", "content": "t=6 hazard=toxin pos=(5,5).", "group": "toxin", "novel": false, "qa": [{"q": "Where is the hazard?", "a": ["(5,5)", "5,5", "5, 5"]}]}
+{"id": "o21", "kind": "json", "content": "{\"t\": 6, \"food\": {\"dx\": 2, \"dy\": 0}}", "group": "food", "novel": false, "qa": [{"q": "How far east is the food?", "a": ["2"]}]}
+{"id": "o22", "kind": "text", "content": "The door is closed.", "group": "door", "novel": false, "qa": [{"q": "Is the door open?", "a": ["no", "closed", "not"]}]}
+{"id": "o23", "kind": "text", "content": "Probably, though not certainly, cell_c is a predator.", "group": null, "novel": false, "qa": [{"q": "Is cell_c certainly a predator?", "a": ["no", "not", "probably"]}]}
+{"id": "o24", "kind": "json", "content": "{\"unknown_object\": true, \"pos\": [0, 1], \"contact\": \"self\"}", "group": null, "novel": true, "qa": [{"q": "What is in contact with the agent?", "a": ["unknown"]}]}
+{"id": "o25", "kind": "text", "content": "At noon the light turned on.", "group": "light", "novel": false, "qa": [{"q": "When did the light turn on?", "a": ["noon", "12"]}]}
+{"id": "o26", "kind": "text", "content": "Someone left the red cup on top of the table.", "group": "cup", "novel": false, "qa": [{"q": "Where is the cup?", "a": ["table"]}]}
+{"id": "o27", "kind": "event", "content": "t=7 self consumed food; energy=0.9.", "group": null, "novel": false, "qa": [{"q": "What is the energy now?", "a": ["0.9"]}]}
+{"id": "o28", "kind": "text", "content": "A toxin patch sits at (5,5).", "group": "toxin", "novel": false, "qa": [{"q": "What is at (5,5)?", "a": ["toxin"]}]}
+{"id": "o29", "kind": "json", "content": "{\"t\": 8, \"event\": \"division\", \"parent\": \"cell_b\", \"children\": [\"cell_b\", \"cell_c\"], \"adjacent_to\": \"self\"}", "group": "divide", "novel": false, "qa": [{"q": "Which cell is the parent?", "a": ["cell_b", "cell b"]}]}
+{"id": "o30", "kind": "text", "content": "There's something edible a couple of squares to your right, which is east.", "group": "food", "novel": false, "qa": [{"q": "Where is the food?", "a": ["east", "right"]}]}
+{"id": "o31", "kind": "text", "content": "cell_c told self that the food at (4,3) is gone.", "group": null, "novel": false, "qa": [{"q": "Who reported the food is gone?", "a": ["cell_c", "cell c"]}]}
+{"id": "o32", "kind": "event", "content": "t=9 light switched on (time 12:00).", "group": "light", "novel": false, "qa": [{"q": "What did the light do?", "a": ["on", "switched"]}]}
