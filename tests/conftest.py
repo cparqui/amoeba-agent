@@ -5,7 +5,19 @@ from typing import Any
 
 import pytest
 
-from amoeba.agent import Action, Agent, Genome, Intent, ModelUpdate, Params, Percept, RelationOp, Route, Store, Usage
+from amoeba.agent import (
+    Action,
+    Agent,
+    Genome,
+    Intent,
+    ModelUpdate,
+    Params,
+    Percept,
+    RelationOp,
+    Route,
+    Store,
+    Usage,
+)
 
 
 class FakeLLM:

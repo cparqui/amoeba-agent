@@ -1,9 +1,9 @@
-"""Echo: the simplest embodiment, a cell on a 1-D line with one food source.
+"""Line: the simplest embodiment, a cell on a 1-D line with one food source.
 
 No hidden rules and no H_true; this environment exists to exercise the PMDA
 loop end to end and to print per-step timings (Phase 0 baselines).
 
-    uv run python -m amoeba_environments.echo --steps 20
+    uv run python -m amoeba_environments.line --steps 20
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ def main() -> None:
     genome = Genome.load(args.genome)
     if args.base_url:
         genome.base_url = args.base_url
-    agent = Agent(genome, Store(args.db), cell_id="echo")
+    agent = Agent(genome, Store(args.db), cell_id="line")
     asyncio.run(run(agent, LineWorld(seed=args.seed), args.steps))
 
 

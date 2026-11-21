@@ -1,11 +1,11 @@
 import asyncio
 
-from amoeba_environments.echo import LineWorld, run
+from amoeba_environments.line import LineWorld, run
 
 from amoeba.agent import Agent
 
 
-def test_echo_runs_in_process(agent: Agent) -> None:
+def test_line_runs_in_process(agent: Agent) -> None:
     world = LineWorld(seed=1)
     start = world.position
     results = asyncio.run(run(agent, world, steps=3, verbose=False))

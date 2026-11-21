@@ -36,8 +36,8 @@ expects one at `http://127.0.0.1:8080/v1`.
 # 1. Serve a small model (any GGUF works; smaller is faster)
 llama-server -m LFM2.5-1.2B-Instruct-Q4_K_M.gguf --port 8080
 
-# 2a. Run a cell in-process on the 1-D echo environment, printing per-stage timings
-uv run python -m amoeba_environments.echo --steps 20
+# 2a. Run a cell in-process on the 1-D line environment, printing per-stage timings
+uv run python -m amoeba_environments.line --steps 20
 
 # 2b. Or launch a cell as an API process and talk to it
 uv run amoeba run --db alpha0.db --port 8700
@@ -59,7 +59,7 @@ src/amoeba/           core library
   client.py           client for a running cell
   cli.py              the `amoeba` command
 environments/         workspace package: environments that embody cells
-  src/amoeba_environments/echo.py    1-D line with food: loop smoke test and timings
+  src/amoeba_environments/line.py    1-D line with food: loop smoke test and timings
   src/amoeba_environments/petri/     petri dish (placeholder)
 tests/
 ```
