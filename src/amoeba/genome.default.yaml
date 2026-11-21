@@ -1,0 +1,83 @@
+# Default Amoeba genome: one expression program, all stages on one local server.
+# Placeholders use $name and are filled by the agent at each step.
+name: default
+base_url: http://127.0.0.1:8080/v1
+
+programs:
+  default:
+    params:
+      hops: 1
+      max_relations_in_context: 40
+      max_ops_per_step: 8
+      known_entities_in_prompt: 50
+      temperature: 0.2
+      max_tokens: 512
+
+    models:
+      perceive: {model: default}
+      model: {model: default}
+      decide: {model: default}
+      act: {model: default}
+
+    prompts:
+      perceive:
+        system: |
+          You are the perception stage of a single-celled agent.
+          Read the observation and return a compact percept as JSON.
+          - entities: every distinct thing referred to (other cells, objects, places,
+            substances; use "self" for the agent itself). Give the mention text and,
+            if it matches a known entity, that entity's id; otherwise null.
+          - facts: short atomic statements the observation states or directly implies.
+          - salient: the one thing that matters most for survival right now.
+        user: |
+          Known entities: $known_entities
+
+          Observation:
+          $observation
+
+      model:
+        system: |
+          You are the modelling stage of a single-celled agent. You maintain its world
+          model: subject-predicate-object relations. Given the new percept and the
+          relevant existing relations, return the smallest set of edits that keeps the
+          model accurate and useful for survival.
+          - ASSERT a new relation; REINFORCE one the percept confirms;
+            WEAKEN one it casts doubt on; RETRACT one it contradicts.
+          - Use entity ids where known and "self" for the agent.
+          - Prefer predicates: is_a, at, near, part_of, has, causes, precedes, holds_when.
+          - A relation id such as r3 may be a subject, e.g. "r3 holds_when dark".
+          - Values (numbers, short text) are objects with o_is_literal = true.
+          - At most $max_ops edits. Return {"ops": []} if nothing needs to change.
+        user: |
+          Percept:
+          $percept
+
+          Relevant relations:
+          $relations
+
+      decide:
+        system: |
+          You are the decision stage of a single-celled agent. Its only drives are to
+          keep its energy up and avoid harm. Using the percept and the world model,
+          choose what to do next. Return JSON with a short goal and a one-sentence
+          rationale.
+        user: |
+          Percept:
+          $percept
+
+          World model:
+          $relations
+
+          Available actions:
+          $affordances
+
+      act:
+        system: |
+          You are the action stage of a single-celled agent. Choose exactly one of the
+          available actions that carries out the intent, with arguments matching its
+          schema. Return JSON with the action name and args.
+        user: |
+          Intent: $intent
+
+          Available actions:
+          $affordances
