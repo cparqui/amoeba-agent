@@ -24,6 +24,20 @@ endpoints:
     serve:
       hf: "LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M"
       # args: ["-ngl", "99", "-c", "4096"]   # GPU offload, context size
+  # Inkling 2 Mini (Thinking Machines): looped MoE, 26.4B total / 3.4B active
+  # (5.4B effective: the middle layers run 3 times). Much larger than the others:
+  # IQ4_NL is 17.6 GB. Needs a llama.cpp build with the inkling2 architecture.
+  - name: inkling2-mini
+    serve:
+      hf: "ggml-org/Inkling-2-Mini-GGUF:IQ4_NL"
+      # -c: the model advertises a 1M context; cap it so the KV cache (one per
+      # loop pass) fits. --no-mmproj: skip the vision encoder, E0.0 is text only.
+      args: ["-c", "8192", "--no-mmproj"]
+    extra:
+      # Reasoning can't be fully disabled ("none" still reasons a little), so
+      # keep it minimal and give it more room than the global max_tokens.
+      chat_template_kwargs: {reasoning_effort: none}
+      max_tokens: 1024
 
   # Ceiling: any hosted OpenAI-compatible model. Free decoding only.
   # - name: ceiling

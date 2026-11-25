@@ -62,7 +62,7 @@ Target (from the agenda): one local model with parse rate â‰¥ 95%, consistency â
    uv run python -m experiments.translation score runs/e0.0/<stamp>
    ```
 
-The defaults (4 models less the judge, 3 syntaxes, 3 lexicon modes, 2 decodings, 3 repeats, 32 observations) make about 1,700 calls per model. Narrow `syntaxes`, `lexicon_modes` or `repeats` for a first pass.
+The defaults (5 endpoints less the judge, 3 syntaxes, 3 lexicon modes, 2 decodings, 3 repeats, 32 observations) make about 1,700 calls per model. Narrow `syntaxes`, `lexicon_modes` or `repeats` for a first pass.
 
 ### Tracking
 
