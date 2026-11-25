@@ -1,26 +1,29 @@
 # E0.0 config. Copy to config.yaml (git-ignored) and edit.
 #
-# Each endpoint is one model behind an OpenAI-compatible server. The simplest
-# local setup is one llama-server per model, each on its own port:
+# Each endpoint is one model. Give it either:
+#   serve:    the pipeline starts a llama-server for it (free port, health check,
+#             log in <run dir>/servers/), runs it, and stops it again; or
+#   base_url: a server that is already running (hosted APIs, vLLM, a shared box).
 #
-#   llama-server -hf lmstudio-community/LFM2.5-350M-GGUF:Q8_0  --port 8081
-#   llama-server -hf unsloth/Qwen3.5-0.8B-GGUF:UD-Q4_K_XL      --port 8082
-#   llama-server -hf ggml-org/gemma-3-1b-it-GGUF:Q4_K_M        --port 8083
-#   llama-server -hf LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M          --port 8084
+# serve options: hf (repo[:quant], downloads on first run) or model_path (local GGUF),
+# args (extra llama-server flags), bin (default $LLAMA_SERVER or llama-server),
+# startup_timeout (s, default 900), env (e.g. CUDA_VISIBLE_DEVICES), port (default free).
 #
 # backend: llama_cpp | vllm | openai  (decides how a grammar is sent; see backends.py)
 
 endpoints:
   - name: lfm2.5-350m
-    base_url: http://127.0.0.1:8081/v1
+    serve: {hf: "lmstudio-community/LFM2.5-350M-GGUF:Q8_0"}
   - name: qwen3.5-0.8b
-    base_url: http://127.0.0.1:8082/v1
+    serve: {hf: "unsloth/Qwen3.5-0.8B-GGUF:UD-Q4_K_XL"}
     extra:
       chat_template_kwargs: {enable_thinking: false}
   - name: gemma3-1b
-    base_url: http://127.0.0.1:8083/v1
+    serve: {hf: "ggml-org/gemma-3-1b-it-GGUF:Q4_K_M"}
   - name: lfm2.5-2.6b
-    base_url: http://127.0.0.1:8084/v1
+    serve:
+      hf: "LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M"
+      # args: ["-ngl", "99", "-c", "4096"]   # GPU offload, context size
 
   # Ceiling: any hosted OpenAI-compatible model. Free decoding only.
   # - name: ceiling
@@ -40,14 +43,22 @@ endpoints:
 
 # Endpoint that answers fidelity questions. Use your strongest model.
 judge: lfm2.5-2.6b
+judge_repeats: [0]    # which repeats the judge scores; more = tighter fidelity estimate
 
 syntaxes: [sexpr, prolog, json]
 lexicon_modes: [empty, seeded, evolving]   # also: seeded_evolving
 decoding: [free, constrained]
 repeats: 3
 temperature: 0.7      # > 0 so stability across repeats means something
+seed: 1234            # repeat r samples with seed + r; remove for unseeded runs
 max_tokens: 300
 lexicon_cap: 150      # most recent symbols shown to the perceiver
 
 # A few starting predicates for the seeded modes. Everything else is learned.
 seed_lexicon: [self, at_time, at_position, has_property, part_of, moved, sees, touches]
+
+# MLflow tracking (optional). Used when uri or $MLFLOW_TRACKING_URI is set;
+# `pipeline --no-track` turns it off for one run.
+tracking:
+  # uri: http://workstation:5000
+  experiment: e0.0-translation

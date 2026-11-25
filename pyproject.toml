@@ -19,6 +19,11 @@ amoeba = "amoeba.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
+# MLflow tracking client for experiments (the server runs elsewhere).
+experiments = ["mlflow-skinny>=3.0"]
+
+[tool.uv]
+default-groups = ["dev", "experiments"]
 
 [build-system]
 requires = ["hatchling"]
