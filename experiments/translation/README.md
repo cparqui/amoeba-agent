@@ -35,7 +35,7 @@ Target (from the agenda): one local model with parse rate â‰¥ 95%, consistency â
 
 ## Running it
 
-1. Install [llama.cpp](https://github.com/ggml-org/llama.cpp) so `llama-server` is on your `PATH` (or set `LLAMA_SERVER=/path/to/llama-server`). You don't start any servers yourself: each endpoint with a `serve:` block is started on a free port, health-checked, used and stopped by the pipeline. `-hf` models download from Hugging Face on first start.
+1. Install [llama.cpp](https://github.com/ggml-org/llama.cpp). Either form of its server works, and they take the same flags: the unified `llama` binary (`llama serve`, from [llama.app](https://llama.app) builds) or the standalone `llama-server`. The pipeline uses `llama-server` if it's on your `PATH`, otherwise `llama serve`. To pick one explicitly, set `LLAMA_SERVER` (e.g. `LLAMA_SERVER='llama serve'` or a full path) or `serve.bin` per endpoint. `pipeline` prints the command it will use and stops before doing anything if it can't find one. You don't start any servers yourself: each endpoint with a `serve:` block is started on a free port, health-checked, used and stopped by the pipeline. `-hf` models download from Hugging Face on first start.
 
 2. Configure, and optionally check that every model starts and answers:
 
@@ -88,7 +88,7 @@ Logging happens after the run finishes, so an MLflow outage during a long run lo
 
 Each run becomes one MLflow run with the condition grid as params and git commit, host and run dir as tags. It has one nested run per condition (`model/syntax/lexicon/decoding`, plus `raw-input`) holding that row's metrics, so conditions can be compared side by side in the MLflow UI. The whole run dir is attached as artifacts. The client is `mlflow-skinny`, installed by `uv sync`. An MLflow server started with `--artifacts-destination <local dir>` stores artifacts on its own disk, so no S3 is needed.
 
-Outputs in the run dir: `results.jsonl` (one record per call: raw output, parsed form, facts, symbols, latency), `judge.jsonl`, `summary.csv`, `summary.md`, `provenance.json` (git commit and dirty flag, host, platform, Python, package versions), `servers.json` (per model: exact command, llama-server version, startup time, `/props`) and `servers/<model>.log`. The results file is also the dataset for fine-tuning a perceiver later.
+Outputs in the run dir: `results.jsonl` (one record per call: raw output, parsed form, facts, symbols, latency), `judge.jsonl`, `summary.csv`, `summary.md`, `provenance.json` (git commit and dirty flag, host, platform, Python, package versions), `servers.json` (per model: exact command, server version, startup time, `/props`) and `servers/<model>.log`. The results file is also the dataset for fine-tuning a perceiver later.
 
 ## Notes
 

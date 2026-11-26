@@ -20,6 +20,7 @@ import asyncio
 import csv
 import json
 import re
+import shlex
 import time
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -30,7 +31,7 @@ import httpx
 import yaml
 from pydantic import BaseModel, Field
 
-from ..common.llama_server import ServerError, llama_server
+from ..common.llama_server import ServerError, find_server, llama_server
 from ..common.tracking import TrackingConfig, TrackingError, check_ready, provenance, tracking
 from . import metrics
 from .backends import Client, Endpoint
@@ -387,8 +388,9 @@ def pipeline(config_path: str, resume: str | None, parallel: bool, do_judge: boo
     cfg = Config.load(config_path)
     if not track:
         cfg.tracking.enabled = False
-    # Check tracking before any server starts, so a missing URI or a dead MLflow
-    # server costs seconds, not a run.
+    # Check the server binary and tracking before anything starts, so a missing
+    # llama.cpp, a missing URI or a dead MLflow server costs seconds, not a run.
+    preflight_servers(cfg, judge=do_judge)
     try:
         uri = check_ready(cfg.tracking)
     except TrackingError as exc:
@@ -397,9 +399,14 @@ def pipeline(config_path: str, resume: str | None, parallel: bool, do_judge: boo
 
     run_dir = new_run_dir(cfg, config_path, resume)
     click.echo(f"run dir: {run_dir}")
-    timings = translate_stage(cfg, run_dir, parallel=parallel)
-    if do_judge and cfg.judge:
-        judge_stage(cfg, run_dir)
+    try:
+        timings = translate_stage(cfg, run_dir, parallel=parallel)
+        if do_judge and cfg.judge:
+            judge_stage(cfg, run_dir)
+    except ServerError as exc:
+        raise click.ClickException(
+            f"{exc}\nResults so far are in {run_dir}; continue with --resume {run_dir}"
+        ) from exc
     score_stage(run_dir)
     (run_dir / "run.json").write_text(json.dumps({"parallel": parallel, "judged": bool(do_judge and cfg.judge),
                                                   "translate_s": timings}, indent=2))
@@ -416,6 +423,23 @@ def pipeline(config_path: str, resume: str | None, parallel: bool, do_judge: boo
         click.echo(f"logged to MLflow run {run_id}")
     else:
         click.echo(f"not tracked; upload later with: python -m experiments.translation track {run_dir}")
+
+
+def preflight_servers(cfg: Config, *, judge: bool) -> None:
+    """Resolve the llama.cpp server command for every managed endpoint this run needs."""
+    names = [*cfg.model_names(), *([cfg.judge] if judge and cfg.judge else [])]
+    seen: dict[str, str] = {}
+    for name in names:
+        ep = cfg.endpoint(name)
+        if not ep.serve:
+            continue
+        try:
+            prefix = find_server(ep.serve.bin)
+        except ServerError as exc:
+            raise click.ClickException(f"[{name}] {exc}") from exc
+        seen.setdefault(shlex.join(prefix), name)
+    for cmd in seen:
+        click.echo(f"model server command: {cmd}")
 
 
 TRACKED = "tracked.json"

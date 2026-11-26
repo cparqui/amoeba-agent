@@ -29,12 +29,12 @@ uv run pytest
 ### Running a cell against a local model
 
 The cell talks to any OpenAI-compatible chat server with JSON-schema output, such as
-[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`. The default genome
+[llama.cpp](https://github.com/ggml-org/llama.cpp)'s server (`llama serve`, or `llama-server` on older builds). The default genome
 expects one at `http://127.0.0.1:8080/v1`.
 
 ```bash
 # 1. Serve a small model (any GGUF works; smaller is faster)
-llama-server -m LFM2.5-1.2B-Instruct-Q4_K_M.gguf --port 8080
+llama serve -m LFM2.5-1.2B-Instruct-Q4_K_M.gguf --port 8080   # or: llama-server -m ...
 
 # 2a. Run a cell in-process on the 1-D line environment, printing per-stage timings
 uv run python -m amoeba_environments.line --steps 20
@@ -62,7 +62,7 @@ environments/         workspace package: environments that embody cells
   src/amoeba_environments/line.py    1-D line with food: loop smoke test and timings
   src/amoeba_environments/petri/     petri dish (placeholder)
 experiments/          standalone experiments from the research agenda
-  common/             shared infra: llama-server lifecycle, provenance, MLflow tracking
+  common/             shared infra: llama.cpp server lifecycle, provenance, MLflow tracking
   translation/        E0.0: can local models perceive into the internal language?
 tests/
 ```

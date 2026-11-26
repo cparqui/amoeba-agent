@@ -1,12 +1,13 @@
 # E0.0 config. Copy to config.yaml (git-ignored) and edit.
 #
 # Each endpoint is one model. Give it either:
-#   serve:    the pipeline starts a llama-server for it (free port, health check,
+#   serve:    the pipeline starts a llama.cpp server for it (free port, health check,
 #             log in <run dir>/servers/), runs it, and stops it again; or
 #   base_url: a server that is already running (hosted APIs, vLLM, a shared box).
 #
 # serve options: hf (repo[:quant], downloads on first run) or model_path (local GGUF),
-# args (extra llama-server flags), bin (default $LLAMA_SERVER or llama-server),
+# args (extra server flags), bin (server command, e.g. "llama serve" or a path;
+# default $LLAMA_SERVER, then llama-server or llama serve, whichever is on PATH),
 # startup_timeout (s, default 900), env (e.g. CUDA_VISIBLE_DEVICES), port (default free).
 #
 # backend: llama_cpp | vllm | openai  (decides how a grammar is sent; see backends.py)
