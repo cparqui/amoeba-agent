@@ -71,8 +71,9 @@ lexicon_cap: 150      # most recent symbols shown to the perceiver
 # A few starting predicates for the seeded modes. Everything else is learned.
 seed_lexicon: [self, at_time, at_position, has_property, part_of, moved, sees, touches]
 
-# MLflow tracking (optional). Used when uri or $MLFLOW_TRACKING_URI is set;
-# `pipeline --no-track` turns it off for one run.
+# MLflow tracking: on by default and required. Set uri here or $MLFLOW_TRACKING_URI;
+# the pipeline stops before starting anything if neither is set or the server is
+# down. `pipeline --no-track` skips it for one run; `track <run dir>` uploads later.
 tracking:
   # uri: http://workstation:5000
   experiment: e0.0-translation

@@ -50,7 +50,7 @@ Target (from the agenda): one local model with parse rate â‰¥ 95%, consistency â
    uv run python -m experiments.translation pipeline -c experiments/translation/config.yaml
    ```
 
-   For each model in turn it starts the server, translates under every condition, and stops the server. Then it starts the judge, scores fidelity, writes the summary and, if tracking is configured, logs it all to MLflow. Models run one at a time so that latency isn't skewed by other models sharing the hardware; `--parallel` runs them together. Other options: `--no-judge`, `--no-track`, `--resume runs/e0.0/<stamp>`.
+   For each model in turn it starts the server, translates under every condition, and stops the server. Then it starts the judge, scores fidelity, writes the summary and, if tracking is configured, logs it all to MLflow. Models run one at a time so that latency isn't skewed by other models sharing the hardware; `--parallel` runs them together. Other options: `--no-judge`, `--no-track` (see Tracking), `--resume runs/e0.0/<stamp>`.
 
    With `--resume`, models whose conditions are all finished are skipped without starting a server. Partly finished condition repeats are rerun from the start, because an evolving lexicon depends on every earlier step.
 
@@ -66,7 +66,27 @@ The defaults (5 endpoints less the judge, 3 syntaxes, 3 lexicon modes, 2 decodin
 
 ### Tracking
 
-Set `tracking.uri` in the config (or `MLFLOW_TRACKING_URI`) to an MLflow server, e.g. `http://workstation:5000`. Each pipeline run becomes one MLflow run with the condition grid as params and git commit, host and run dir as tags. It has one nested run per condition (`model/syntax/lexicon/decoding`, plus `raw-input`) holding that row's metrics, so conditions can be compared side by side in the MLflow UI. The whole run dir is attached as artifacts. The client is `mlflow-skinny`, installed by `uv sync`. An MLflow server started with `--artifacts-destination <local dir>` stores artifacts on its own disk, so no S3 is needed.
+Every pipeline run is tracked in MLflow by default, and tracking is required. Point it at your server once, either in your shell profile (applies to every experiment) or per config:
+
+```bash
+export MLFLOW_TRACKING_URI=http://workstation:5000     # e.g. in ~/.bashrc
+```
+
+```yaml
+tracking:
+  uri: http://workstation:5000
+```
+
+Before any model server starts, the pipeline checks the server's `/health`. If no URI is set or the server is unreachable, it stops within seconds and nothing has been run. To run without a server, pass `--no-track`. The run dir keeps everything, and `track` uploads it later:
+
+```bash
+uv run python -m experiments.translation pipeline -c experiments/translation/config.yaml --no-track
+uv run python -m experiments.translation track runs/e0.0/<stamp>       # once MLflow is up
+```
+
+Logging happens after the run finishes, so an MLflow outage during a long run loses nothing. The pipeline prints the `track` command to retry. `track` refuses a run dir it has already logged (`tracked.json` records the MLflow run id) unless you pass `--force`.
+
+Each run becomes one MLflow run with the condition grid as params and git commit, host and run dir as tags. It has one nested run per condition (`model/syntax/lexicon/decoding`, plus `raw-input`) holding that row's metrics, so conditions can be compared side by side in the MLflow UI. The whole run dir is attached as artifacts. The client is `mlflow-skinny`, installed by `uv sync`. An MLflow server started with `--artifacts-destination <local dir>` stores artifacts on its own disk, so no S3 is needed.
 
 Outputs in the run dir: `results.jsonl` (one record per call: raw output, parsed form, facts, symbols, latency), `judge.jsonl`, `summary.csv`, `summary.md`, `provenance.json` (git commit and dirty flag, host, platform, Python, package versions), `servers.json` (per model: exact command, llama-server version, startup time, `/props`) and `servers/<model>.log`. The results file is also the dataset for fine-tuning a perceiver later.
 

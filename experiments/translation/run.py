@@ -31,7 +31,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from ..common.llama_server import ServerError, llama_server
-from ..common.tracking import TrackingConfig, provenance, tracking
+from ..common.tracking import TrackingConfig, TrackingError, check_ready, provenance, tracking
 from . import metrics
 from .backends import Client, Endpoint
 from .prompts import JUDGE_SYSTEM, JUDGE_USER, perceive_system, perceive_user
@@ -387,37 +387,93 @@ def pipeline(config_path: str, resume: str | None, parallel: bool, do_judge: boo
     cfg = Config.load(config_path)
     if not track:
         cfg.tracking.enabled = False
+    # Check tracking before any server starts, so a missing URI or a dead MLflow
+    # server costs seconds, not a run.
+    try:
+        uri = check_ready(cfg.tracking)
+    except TrackingError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"tracking to MLflow at {uri}" if uri else "tracking OFF for this run (--no-track)")
+
     run_dir = new_run_dir(cfg, config_path, resume)
     click.echo(f"run dir: {run_dir}")
-    prov = json.loads((run_dir / "provenance.json").read_text())
+    timings = translate_stage(cfg, run_dir, parallel=parallel)
+    if do_judge and cfg.judge:
+        judge_stage(cfg, run_dir)
+    score_stage(run_dir)
+    (run_dir / "run.json").write_text(json.dumps({"parallel": parallel, "judged": bool(do_judge and cfg.judge),
+                                                  "translate_s": timings}, indent=2))
+    click.echo((run_dir / "summary.md").read_text())
 
+    if uri:
+        try:
+            run_id = log_run(cfg, run_dir)
+        except Exception as exc:  # noqa: BLE001  (results are safe on disk; say how to retry)
+            raise click.ClickException(
+                f"run finished but MLflow logging failed ({exc}). Results are in {run_dir}; "
+                f"upload them with: python -m experiments.translation track {run_dir}"
+            ) from exc
+        click.echo(f"logged to MLflow run {run_id}")
+    else:
+        click.echo(f"not tracked; upload later with: python -m experiments.translation track {run_dir}")
+
+
+TRACKED = "tracked.json"
+
+
+def log_run(cfg: Config, run_dir: Path) -> str:
+    """Log a finished run dir to MLflow; return the MLflow run id.
+
+    Used at the end of `pipeline` and by `track`, so a run made with --no-track,
+    or whose logging failed, is logged exactly as a live one would have been.
+    """
+    prov = json.loads((run_dir / "provenance.json").read_text())
+    meta = json.loads((run_dir / "run.json").read_text()) if (run_dir / "run.json").exists() else {}
+    rows = metrics.summarize(load_jsonl(run_dir / "results.jsonl"), load_jsonl(run_dir / "judge.jsonl"))
     with tracking(cfg.tracking, "e0.0-translation", run_dir.name) as tr:
-        if tr.active:
-            click.echo(f"tracking to MLflow at {cfg.tracking.resolved_uri()}")
         tr.tags({
-            "experiment": "E0.0", "run_dir": str(run_dir), "git_commit": prov["git_commit"],
-            "git_dirty": prov["git_dirty"], "host": prov["host"],
+            "experiment": "E0.0", "run_dir": str(run_dir), "git_commit": prov.get("git_commit"),
+            "git_dirty": prov.get("git_dirty"), "host": prov.get("host"),
         })
         tr.params({
             "models": cfg.model_names(), "judge": cfg.judge, "syntaxes": cfg.syntaxes,
             "lexicon_modes": cfg.lexicon_modes, "decoding": cfg.decoding, "repeats": cfg.repeats,
             "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "lexicon_cap": cfg.lexicon_cap,
-            "seed": cfg.seed, "judge_repeats": cfg.judge_repeats, "parallel": parallel,
-            "data": Path(cfg.data).name,
+            "seed": cfg.seed, "judge_repeats": cfg.judge_repeats, "parallel": meta.get("parallel"),
+            "judged": meta.get("judged"), "data": Path(cfg.data).name,
         })
-        try:
-            timings = translate_stage(cfg, run_dir, parallel=parallel)
-            tr.metrics({f"translate_s.{k}": v for k, v in timings.items()})
-            if do_judge and cfg.judge:
-                judge_stage(cfg, run_dir)
-            rows = score_stage(run_dir)
-            for row in rows:
-                with tr.child(condition_name(row)) as c:
-                    c.params({k: row.get(k) for k in metrics.CONDITION_KEYS})
-                    c.metrics(row)
-        finally:
-            tr.artifacts(run_dir)
-    click.echo((run_dir / "summary.md").read_text())
+        tr.metrics({f"translate_s.{k}": v for k, v in (meta.get("translate_s") or {}).items()})
+        for row in rows:
+            with tr.child(condition_name(row)) as c:
+                c.params({k: row.get(k) for k in metrics.CONDITION_KEYS})
+                c.metrics(row)
+        tr.artifacts(run_dir)
+        run_id = tr.run_id
+    (run_dir / TRACKED).write_text(json.dumps({"mlflow_run_id": run_id, "uri": cfg.tracking.resolved_uri()}, indent=2))
+    return run_id
+
+
+@cli.command()
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False))
+@click.option("--uri", help="MLflow tracking URI; default the run's config, then $MLFLOW_TRACKING_URI.")
+@click.option("--force", is_flag=True, help="Log again even if this run dir was already logged.")
+def track(run_dir: str, uri: str | None, force: bool) -> None:
+    """Upload a finished run dir to MLflow (for --no-track runs or failed logging)."""
+    d = Path(run_dir)
+    if (d / TRACKED).exists() and not force:
+        prev = json.loads((d / TRACKED).read_text())
+        raise click.ClickException(f"already logged as MLflow run {prev['mlflow_run_id']}; pass --force to log again")
+    if not (d / "summary.md").exists():
+        raise click.ClickException(f"{d} has no summary.md; finish the run (or `score` it) first")
+    cfg = Config.load(d / "config.yaml")
+    cfg.tracking.enabled = True
+    if uri:
+        cfg.tracking.uri = uri
+    try:
+        run_id = log_run(cfg, d)
+    except TrackingError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"logged {d} to MLflow run {run_id}")
 
 
 @cli.command()

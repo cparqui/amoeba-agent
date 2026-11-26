@@ -25,13 +25,50 @@ from typing import Any, Iterator
 from pydantic import BaseModel, Field
 
 
+class TrackingError(RuntimeError):
+    pass
+
+
 class TrackingConfig(BaseModel):
+    """Tracking is on by default and required: a run with no URI fails before it
+    starts, unless tracking is turned off explicitly (`enabled: false` or
+    `--no-track`). Untracked runs can be uploaded later with the `track` command."""
+
     uri: str | None = Field(default=None, description="MLflow tracking URI; default $MLFLOW_TRACKING_URI.")
     experiment: str | None = Field(default=None, description="MLflow experiment name; default set by the experiment.")
     enabled: bool = True
 
     def resolved_uri(self) -> str | None:
         return self.uri or os.environ.get("MLFLOW_TRACKING_URI")
+
+
+def check_ready(cfg: TrackingConfig, timeout: float = 5.0) -> str | None:
+    """Fail fast, before any compute: return the URI to log to, or None if disabled.
+
+    For an HTTP server this hits its /health endpoint, so a server that is down
+    fails in seconds rather than after MLflow's own multi-minute retry loop.
+    """
+    if not cfg.enabled:
+        return None
+    uri = cfg.resolved_uri()
+    if not uri:
+        raise TrackingError(
+            "tracking is on but no MLflow URI is set. Set tracking.uri in the config or "
+            "MLFLOW_TRACKING_URI (e.g. http://workstation:5000), or pass --no-track "
+            "and upload the run later with the `track` command."
+        )
+    if uri.startswith(("http://", "https://")):
+        import httpx  # noqa: PLC0415
+
+        try:
+            r = httpx.get(f"{uri.rstrip('/')}/health", timeout=timeout)
+            r.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise TrackingError(
+                f"MLflow server at {uri} is not reachable ({exc}). Start it, or pass --no-track "
+                "and upload the run later with the `track` command."
+            ) from exc
+    return uri
 
 
 def _git(*args: str) -> str | None:
@@ -85,6 +122,11 @@ class Tracker:
     def active(self) -> bool:
         return self._mlflow is not None
 
+    @property
+    def run_id(self) -> str | None:
+        run = self._mlflow.active_run() if self._mlflow else None
+        return run.info.run_id if run else None
+
     def params(self, d: dict[str, Any]) -> None:
         if self._mlflow:
             self._mlflow.log_params(flatten(d))
@@ -122,14 +164,19 @@ class Tracker:
 
 @contextmanager
 def tracking(cfg: TrackingConfig, default_experiment: str, run_name: str) -> Iterator[Tracker]:
-    uri = cfg.resolved_uri() if cfg.enabled else None
+    """An MLflow run, or a no-op tracker when tracking is disabled."""
+    uri = check_ready(cfg)
     if not uri:
         yield Tracker(None)
         return
+    # MLflow's default (7 retries, backoff 2) takes ~4 minutes to give up on a
+    # dead server; the run dir is kept either way, so fail sooner.
+    os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "3")
+    os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
     try:
         import mlflow  # noqa: PLC0415  (optional dependency)
     except ImportError as exc:
-        raise RuntimeError(
+        raise TrackingError(
             "tracking is configured but mlflow is not installed; run `uv sync --all-packages --group experiments`"
         ) from exc
     mlflow.set_tracking_uri(uri)
