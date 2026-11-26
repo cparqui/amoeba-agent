@@ -35,23 +35,26 @@ Target (from the agenda): one local model with parse rate â‰¥ 95%, consistency â
 
 ## Running it
 
-1. Install [llama.cpp](https://github.com/ggml-org/llama.cpp) and start one `llama-server` per model; `-hf` downloads the GGUF from Hugging Face on first run. The ports must match the config.
+1. Install [llama.cpp](https://github.com/ggml-org/llama.cpp) so `llama-server` is on your `PATH` (or set `LLAMA_SERVER=/path/to/llama-server`). You don't start any servers yourself: each endpoint with a `serve:` block is started on a free port, health-checked, used and stopped by the pipeline. `-hf` models download from Hugging Face on first start.
 
-   ```bash
-   llama-server -hf lmstudio-community/LFM2.5-350M-GGUF:Q8_0 --port 8081
-   llama-server -hf unsloth/Qwen3.5-0.8B-GGUF:UD-Q4_K_XL     --port 8082
-   llama-server -hf ggml-org/gemma-3-1b-it-GGUF:Q4_K_M       --port 8083
-   llama-server -hf LiquidAI/LFM2.5-2.6B-GGUF:Q4_K_M         --port 8084
-   ```
-
-2. Configure and check:
+2. Configure, and optionally check that every model starts and answers:
 
    ```bash
    cp experiments/translation/config.example.yaml experiments/translation/config.yaml
    uv run python -m experiments.translation check -c experiments/translation/config.yaml
    ```
 
-3. Run, judge, score:
+3. Run everything with one command:
+
+   ```bash
+   uv run python -m experiments.translation pipeline -c experiments/translation/config.yaml
+   ```
+
+   For each model in turn it starts the server, translates under every condition, and stops the server. Then it starts the judge, scores fidelity, writes the summary and, if tracking is configured, logs it all to MLflow. Models run one at a time so that latency isn't skewed by other models sharing the hardware; `--parallel` runs them together. Other options: `--no-judge`, `--no-track`, `--resume runs/e0.0/<stamp>`.
+
+   With `--resume`, models whose conditions are all finished are skipped without starting a server. Partly finished condition repeats are rerun from the start, because an evolving lexicon depends on every earlier step.
+
+   The stages also run on their own (each starts the servers it needs):
 
    ```bash
    uv run python -m experiments.translation run   -c experiments/translation/config.yaml
@@ -59,11 +62,13 @@ Target (from the agenda): one local model with parse rate â‰¥ 95%, consistency â
    uv run python -m experiments.translation score runs/e0.0/<stamp>
    ```
 
-   `run --resume runs/e0.0/<stamp>` continues an interrupted run. Partly finished condition repeats are rerun from the start, because an evolving lexicon depends on every earlier step.
+The defaults (5 endpoints less the judge, 3 syntaxes, 3 lexicon modes, 2 decodings, 3 repeats, 32 observations) make about 1,700 calls per model. Narrow `syntaxes`, `lexicon_modes` or `repeats` for a first pass.
 
-The defaults (4 models less the judge, 3 syntaxes, 3 lexicon modes, 2 decodings, 3 repeats, 32 observations) make about 1,700 calls per model. Narrow `syntaxes`, `lexicon_modes` or `repeats` for a first pass.
+### Tracking
 
-Outputs in the run dir: `results.jsonl` (one record per call: raw output, parsed form, facts, symbols, latency), `judge.jsonl`, `summary.csv` and `summary.md`. The results file is also the dataset for fine-tuning a perceiver later.
+Set `tracking.uri` in the config (or `MLFLOW_TRACKING_URI`) to an MLflow server, e.g. `http://workstation:5000`. Each pipeline run becomes one MLflow run with the condition grid as params and git commit, host and run dir as tags. It has one nested run per condition (`model/syntax/lexicon/decoding`, plus `raw-input`) holding that row's metrics, so conditions can be compared side by side in the MLflow UI. The whole run dir is attached as artifacts. The client is `mlflow-skinny`, installed by `uv sync`. An MLflow server started with `--artifacts-destination <local dir>` stores artifacts on its own disk, so no S3 is needed.
+
+Outputs in the run dir: `results.jsonl` (one record per call: raw output, parsed form, facts, symbols, latency), `judge.jsonl`, `summary.csv`, `summary.md`, `provenance.json` (git commit and dirty flag, host, platform, Python, package versions), `servers.json` (per model: exact command, llama-server version, startup time, `/props`) and `servers/<model>.log`. The results file is also the dataset for fine-tuning a perceiver later.
 
 ## Notes
 

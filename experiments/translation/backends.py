@@ -17,7 +17,9 @@ import time
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from ..common.llama_server import ServeSpec
 
 GRAMMAR_FIELDS: dict[str, str | None] = {
     "llama_cpp": "grammar",
@@ -27,10 +29,15 @@ GRAMMAR_FIELDS: dict[str, str | None] = {
 
 
 class Endpoint(BaseModel):
-    """One model behind one OpenAI-compatible server."""
+    """One model behind one OpenAI-compatible server.
+
+    Either give `base_url` for a server that is already running (hosted APIs,
+    vLLM), or `serve` to have the pipeline start a llama-server for it.
+    """
 
     name: str
-    base_url: str
+    base_url: str | None = None
+    serve: ServeSpec | None = Field(default=None, description="Launch spec; the pipeline starts and stops the server.")
     model: str = "default"
     backend: str = "llama_cpp"
     api_key_env: str | None = None
@@ -42,6 +49,17 @@ class Endpoint(BaseModel):
         description="Merged into every request body, e.g. chat_template_kwargs to disable thinking.",
     )
     timeout: float = 180.0
+
+    @model_validator(mode="after")
+    def _reachable(self) -> Endpoint:
+        if not self.base_url and not self.serve:
+            raise ValueError(f"endpoint {self.name!r} needs base_url or serve")
+        return self
+
+    @property
+    def managed(self) -> bool:
+        """True when the pipeline launches this endpoint's server."""
+        return self.serve is not None
 
     @property
     def grammar_path(self) -> str | None:
@@ -75,6 +93,7 @@ def build_body(
     grammar: str | None,
     temperature: float,
     max_tokens: int,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": ep.model,
@@ -83,6 +102,8 @@ def build_body(
         "max_tokens": max_tokens,
         **ep.extra,
     }
+    if seed is not None:
+        body["seed"] = seed
     if grammar is not None:
         if not ep.grammar_path:
             raise ValueError(f"endpoint {ep.name} ({ep.backend}) cannot take a grammar")
@@ -94,6 +115,8 @@ class Client:
     """Thin async client; one per endpoint."""
 
     def __init__(self, ep: Endpoint, transport: httpx.AsyncBaseTransport | None = None) -> None:
+        if not ep.base_url:
+            raise ValueError(f"endpoint {ep.name!r} has no base_url; start its server first")
         self.ep = ep
         key = os.environ.get(ep.api_key_env) if ep.api_key_env else None
         headers = {"Authorization": f"Bearer {key}"} if key else {}
@@ -109,9 +132,10 @@ class Client:
         grammar: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 400,
+        seed: int | None = None,
     ) -> Completion:
         body = build_body(
-            self.ep, system, user, grammar=grammar, temperature=temperature, max_tokens=max_tokens
+            self.ep, system, user, grammar=grammar, temperature=temperature, max_tokens=max_tokens, seed=seed
         )
         start = time.perf_counter()
         resp = await self._http.post("/chat/completions", json=body)

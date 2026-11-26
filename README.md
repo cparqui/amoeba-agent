@@ -62,6 +62,7 @@ environments/         workspace package: environments that embody cells
   src/amoeba_environments/line.py    1-D line with food: loop smoke test and timings
   src/amoeba_environments/petri/     petri dish (placeholder)
 experiments/          standalone experiments from the research agenda
+  common/             shared infra: llama-server lifecycle, provenance, MLflow tracking
   translation/        E0.0: can local models perceive into the internal language?
 tests/
 ```
