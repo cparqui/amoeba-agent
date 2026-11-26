@@ -205,6 +205,51 @@ def test_resume_skips_finished_models(fake_bin: Path, tmp_path: Path) -> None:
     assert not (tmp_path / "requests.jsonl").exists()  # no server started, no calls made
 
 
+@pytest.fixture
+def unified_only(fake_bin: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A PATH holding only a unified `llama` binary (serve / version), no llama-server."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    llama = bindir / "llama"
+    llama.write_text(
+        "#!/bin/sh\n"
+        'case "$1" in\n'
+        '  version) echo "llama version 9999 (unified fake)"; exit 0;;\n'
+        f'  serve) shift; exec "{fake_bin}" "$@";;\n'
+        '  *) echo "unknown command: $1" >&2; exit 2;;\n'
+        "esac\n"
+    )
+    llama.chmod(0o755)
+    monkeypatch.delenv("LLAMA_SERVER")
+    monkeypatch.setenv("PATH", str(bindir))
+    return llama
+
+
+def test_unified_llama_serve_autodetected(unified_only: Path, tmp_path: Path) -> None:
+    from experiments.common.llama_server import server_command
+
+    assert server_command() == ["llama", "serve"]
+    with llama_server(ServeSpec(hf="org/model:Q4", startup_timeout=20), tmp_path / "srv.log") as srv:
+        assert srv.command[:2] == ["llama", "serve"]
+        assert "unified fake" in srv.info["version"]  # from `llama version`, not --version
+
+
+def test_llama_server_env_accepts_subcommand(unified_only: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLAMA_SERVER", f"{unified_only} serve")
+    with llama_server(ServeSpec(hf="org/model:Q4", startup_timeout=20)) as srv:
+        assert srv.command[:2] == [str(unified_only), "serve"]
+
+
+def test_missing_server_fails_before_run(fake_bin: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LLAMA_SERVER")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    res = CliRunner().invoke(cli, ["pipeline", "-c", str(_config(tmp_path)), "--no-track"])
+    assert res.exit_code != 0
+    assert "llama.cpp server not found" in res.output and "LLAMA_SERVER" in res.output
+    assert "Traceback" not in res.output
+    assert not (tmp_path / "runs").exists()
+
+
 def test_tracking_required_by_default(fake_bin: Path, tmp_path: Path) -> None:
     res = CliRunner().invoke(cli, ["pipeline", "-c", str(_config(tmp_path))])
     assert res.exit_code != 0 and "no MLflow URI is set" in res.output
