@@ -20,11 +20,13 @@ import asyncio
 import csv
 import json
 import re
+import os
 import shlex
 import time
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from collections import defaultdict
+from typing import Any, Callable, Iterator
 
 import click
 import httpx
@@ -33,7 +35,19 @@ from pydantic import BaseModel, Field
 
 from ..common.env import load_env
 from ..common.llama_server import ServerError, find_server, llama_server
-from ..common.tracking import TrackingConfig, TrackingError, check_ready, provenance, tracking
+from ..common.tracking import (
+    LEDGER,
+    LiveRun,
+    Mode,
+    RunSpec,
+    Snapshot,
+    Status,
+    TrackingConfig,
+    TrackingError,
+    add_point,
+    probe,
+    provenance,
+)
 from . import metrics
 from .backends import Client, Endpoint
 from .prompts import JUDGE_SYSTEM, JUDGE_USER, perceive_system, perceive_user
@@ -85,11 +99,17 @@ class Config(BaseModel):
         raise click.BadParameter(f"no endpoint named {name!r}")
 
 
-def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
+def load_jsonl(path: str | Path, *, growing: bool = False) -> list[dict[str, Any]]:
+    """Read JSONL. With `growing`, a file being appended to by another thread may
+    end in a half-written line; that line is skipped instead of raising."""
     p = Path(path)
     if not p.exists():
         return []
-    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+    text = p.read_text()
+    lines = [line for line in text.splitlines() if line.strip()]
+    if growing and lines and not text.endswith("\n"):
+        lines = lines[:-1]
+    return [json.loads(line) for line in lines]
 
 
 # --------------------------------------------------------------------------- #
@@ -169,7 +189,12 @@ async def run_condition(
 
 
 async def run_endpoint(
-    ep: Endpoint, cfg: Config, observations: list[dict[str, Any]], done: set, sink: Any
+    ep: Endpoint,
+    cfg: Config,
+    observations: list[dict[str, Any]],
+    done: set,
+    sink: Any,
+    on_progress: Callable[[], None] | None = None,
 ) -> None:
     client = Client(ep)
     try:
@@ -185,6 +210,9 @@ async def run_endpoint(
                         t0 = time.perf_counter()
                         await run_condition(client, cfg, observations, syntax, mode, decoding, r, sink)
                         click.echo(f"[{ep.name}] {syntax}/{mode}/{decoding} #{r} {time.perf_counter() - t0:.0f}s")
+                        if on_progress:
+                            # In a thread, so a slow tracking server never stalls in-flight requests.
+                            await asyncio.to_thread(on_progress)
     finally:
         await client.aclose()
 
@@ -241,7 +269,9 @@ def _conditions(cfg: Config, ep: Endpoint) -> list[tuple]:
     ]
 
 
-def translate_stage(cfg: Config, run_dir: Path, *, parallel: bool = False) -> dict[str, float]:
+def translate_stage(
+    cfg: Config, run_dir: Path, *, parallel: bool = False, on_progress: Callable[[], None] | None = None
+) -> dict[str, float]:
     """Translate every observation under every condition into results.jsonl.
 
     Models run one at a time by default. Each gets its own server, started and
@@ -250,7 +280,8 @@ def translate_stage(cfg: Config, run_dir: Path, *, parallel: bool = False) -> di
 
     Resume works per whole condition-repeat: partial ones are dropped and rerun,
     because an evolving lexicon depends on every earlier step. Returns seconds
-    spent translating per model.
+    spent translating per model, also kept in timings.json as each model finishes.
+    `on_progress` is called after every finished condition-repeat (live tracking).
     """
     observations = load_jsonl(cfg.data)
     results = run_dir / "results.jsonl"
@@ -269,7 +300,15 @@ def translate_stage(cfg: Config, run_dir: Path, *, parallel: bool = False) -> di
         if ep not in todo:
             click.echo(f"[{ep.name}] all conditions done; skipping")
 
-    timings: dict[str, float] = {}
+    timings_path = run_dir / "timings.json"
+    timings: dict[str, float] = json.loads(timings_path.read_text()) if timings_path.exists() else {}
+
+    def model_done(name: str, seconds: float) -> None:
+        timings[name] = seconds
+        timings_path.write_text(json.dumps(timings, indent=2))
+        if on_progress:
+            on_progress()
+
     with results.open("a") as fh:
 
         def sink(rec: dict[str, Any]) -> None:
@@ -285,18 +324,20 @@ def translate_stage(cfg: Config, run_dir: Path, *, parallel: bool = False) -> di
                     live.append(lep)
 
                 async def main() -> None:
-                    await asyncio.gather(*(run_endpoint(ep, cfg, observations, done, sink) for ep in live))
+                    await asyncio.gather(
+                        *(run_endpoint(ep, cfg, observations, done, sink, on_progress) for ep in live)
+                    )
 
                 t0 = time.perf_counter()
                 asyncio.run(main())
-                timings["all"] = time.perf_counter() - t0
+                model_done("all", time.perf_counter() - t0)
         else:
             for ep in todo:
                 with serving(ep, run_dir) as (lep, info):
                     _record_server(run_dir, ep.name, info)
                     t0 = time.perf_counter()
-                    asyncio.run(run_endpoint(lep, cfg, observations, done, sink))
-                    timings[ep.name] = time.perf_counter() - t0
+                    asyncio.run(run_endpoint(lep, cfg, observations, done, sink, on_progress))
+                    model_done(ep.name, time.perf_counter() - t0)
     click.echo(f"wrote {results}")
     return timings
 
@@ -395,116 +436,231 @@ def pipeline(config_path: str, resume: str | None, parallel: bool, do_judge: boo
     cfg = Config.load(config_path)
     if not track:
         cfg.tracking.enabled = False
-    # Check the server binary and tracking before anything starts, so a missing
-    # llama.cpp, a missing URI or a dead MLflow server costs seconds, not a run.
-    preflight_servers(cfg, judge=do_judge)
-    try:
-        uri = check_ready(cfg.tracking)
-    except TrackingError as exc:
-        raise click.ClickException(str(exc)) from exc
-    click.echo(f"tracking to MLflow at {uri}" if uri else "tracking OFF for this run (--no-track)")
+    # Everything that can be checked without running anything is checked here,
+    # so a bad config or missing binary costs seconds, not a run.
+    preflight(cfg, judge=do_judge)
 
     run_dir = new_run_dir(cfg, config_path, resume)
     click.echo(f"run dir: {run_dir}")
+    (run_dir / "run.json").write_text(json.dumps({"parallel": parallel, "judged": bool(do_judge and cfg.judge)}, indent=2))
+
+    live = LiveRun(cfg.tracking, DEFAULT_EXPERIMENT, run_dir, lambda: snapshot(cfg, run_dir))
+    live.start()  # never raises for server problems: it warns and degrades
+    if live.mode is Mode.OFF:
+        click.echo("tracking OFF for this run (--no-track)")
+
     try:
-        timings = translate_stage(cfg, run_dir, parallel=parallel)
+        translate_stage(cfg, run_dir, parallel=parallel, on_progress=live.sync)
         if do_judge and cfg.judge:
             judge_stage(cfg, run_dir)
     except ServerError as exc:
-        raise click.ClickException(
-            f"{exc}\nResults so far are in {run_dir}; continue with --resume {run_dir}"
-        ) from exc
+        live.abort()
+        raise click.ClickException(f"{exc}\nResults so far are in {run_dir}; continue with --resume {run_dir}") from exc
+    except BaseException:
+        live.abort()
+        raise
     score_stage(run_dir)
-    (run_dir / "run.json").write_text(json.dumps({"parallel": parallel, "judged": bool(do_judge and cfg.judge),
-                                                  "translate_s": timings}, indent=2))
     click.echo((run_dir / "summary.md").read_text())
 
-    if uri:
-        try:
-            run_id = log_run(cfg, run_dir)
-        except Exception as exc:  # noqa: BLE001  (results are safe on disk; say how to retry)
-            raise click.ClickException(
-                f"run finished but MLflow logging failed ({exc}). Results are in {run_dir}; "
-                f"upload them with: python -m experiments.translation track {run_dir}"
-            ) from exc
-        click.echo(f"logged to MLflow run {run_id}")
+    upload = f"python -m experiments.translation track {run_dir}"
+    if live.finish():
+        click.echo(f"logged to MLflow run {live.run_id}" + (f": {live.run_url}" if live.run_url else ""))
+    elif live.mode is Mode.OFF:
+        click.echo(f"not tracked; upload later with: {upload}")
     else:
-        click.echo(f"not tracked; upload later with: python -m experiments.translation track {run_dir}")
+        click.echo(f"warning: MLflow does not have the complete run ({live.reason}); results are in {run_dir}. "
+                   f"Upload them with: {upload}", err=True)
 
 
-def preflight_servers(cfg: Config, *, judge: bool) -> None:
-    """Resolve the llama.cpp server command for every managed endpoint this run needs."""
-    names = [*cfg.model_names(), *([cfg.judge] if judge and cfg.judge else [])]
-    seen: dict[str, str] = {}
-    for name in names:
-        ep = cfg.endpoint(name)
-        if not ep.serve:
-            continue
-        try:
-            prefix = find_server(ep.serve.bin)
-        except ServerError as exc:
-            raise click.ClickException(f"[{name}] {exc}") from exc
-        seen.setdefault(shlex.join(prefix), name)
-    for cmd in seen:
-        click.echo(f"model server command: {cmd}")
+DEFAULT_EXPERIMENT = "e0.0-translation"
+# Live metrics per condition: everything in the summary except the condition
+# keys, the row count, and fidelity (which needs the judge, so comes at the end).
+LIVE_METRICS = tuple(c for c in metrics.COLUMNS if c not in (*metrics.CONDITION_KEYS, "n", "fidelity"))
 
 
-TRACKED = "tracked.json"
+def snapshot(cfg: Config, run_dir: Path) -> Snapshot:
+    """What MLflow should hold for this run dir right now.
 
-
-def log_run(cfg: Config, run_dir: Path) -> str:
-    """Log a finished run dir to MLflow; return the MLflow run id.
-
-    Used at the end of `pipeline` and by `track`, so a run made with --no-track,
-    or whose logging failed, is logged exactly as a live one would have been.
+    One child run per condition, whose metrics are logged at step k = number of
+    finished repeats, so the charts fill in as repeats complete. Fidelity is
+    added at the last step once the judge has run. The parent run carries the
+    condition grid, provenance tags, progress and per-model translate time.
     """
-    prov = json.loads((run_dir / "provenance.json").read_text())
+    records = load_jsonl(run_dir / "results.jsonl", growing=True)
+    obs = load_jsonl(cfg.data)
+    by_cond: dict[tuple, dict[int, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    for r in records:
+        by_cond[metrics.cond_of(r)][r["repeat"]].append(r)
+    n_obs = len(obs) or max((len(rs) for reps in by_cond.values() for rs in reps.values()), default=0)
+
+    children: dict[str, RunSpec] = {}
+    finished: dict[str, int] = {}
+    complete_records: list[dict[str, Any]] = []
+    for cond, reps in sorted(by_cond.items()):
+        complete = sorted(r for r, rs in reps.items() if len(rs) == n_obs)
+        if not complete:
+            continue
+        row0 = dict(zip(metrics.CONDITION_KEYS, cond))
+        name = condition_name(row0)
+        spec = RunSpec(params=row0, tags={"condition": name})
+        for k in range(1, len(complete) + 1):
+            row = metrics.summarize([x for r in complete[:k] for x in reps[r]])[0]
+            for key in LIVE_METRICS:
+                add_point(spec.series, key, k, row.get(key))
+        children[name] = spec
+        finished[name] = len(complete)
+        complete_records += [x for r in complete for x in reps[r]]
+
+    judged = load_jsonl(run_dir / "judge.jsonl")
+    if judged:
+        for row in metrics.summarize(complete_records, judged):
+            name = condition_name(row)
+            if name == "raw-input":
+                children[name] = RunSpec(params={"model": "(raw input)"}, tags={"condition": name})
+                add_point(children[name].series, "fidelity", 0, row.get("fidelity"))
+            elif name in children:
+                add_point(children[name].series, "fidelity", finished[name], row.get("fidelity"))
+
     meta = json.loads((run_dir / "run.json").read_text()) if (run_dir / "run.json").exists() else {}
-    rows = metrics.summarize(load_jsonl(run_dir / "results.jsonl"), load_jsonl(run_dir / "judge.jsonl"))
-    with tracking(cfg.tracking, "e0.0-translation", run_dir.name) as tr:
-        tr.tags({
-            "experiment": "E0.0", "run_dir": str(run_dir), "git_commit": prov.get("git_commit"),
-            "git_dirty": prov.get("git_dirty"), "host": prov.get("host"),
-        })
-        tr.params({
+    prov = json.loads((run_dir / "provenance.json").read_text()) if (run_dir / "provenance.json").exists() else {}
+    timings = json.loads((run_dir / "timings.json").read_text()) if (run_dir / "timings.json").exists() else {}
+    total = sum(len(_conditions(cfg, cfg.endpoint(n))) for n in cfg.model_names())
+    done = sum(finished.values())
+    parent = RunSpec(
+        params={
             "models": cfg.model_names(), "judge": cfg.judge, "syntaxes": cfg.syntaxes,
             "lexicon_modes": cfg.lexicon_modes, "decoding": cfg.decoding, "repeats": cfg.repeats,
             "temperature": cfg.temperature, "max_tokens": cfg.max_tokens, "lexicon_cap": cfg.lexicon_cap,
             "seed": cfg.seed, "judge_repeats": cfg.judge_repeats, "parallel": meta.get("parallel"),
-            "judged": meta.get("judged"), "data": Path(cfg.data).name,
-        })
-        tr.metrics({f"translate_s.{k}": v for k, v in (meta.get("translate_s") or {}).items()})
-        for row in rows:
-            with tr.child(condition_name(row)) as c:
-                c.params({k: row.get(k) for k in metrics.CONDITION_KEYS})
-                c.metrics(row)
-        tr.artifacts(run_dir)
-        run_id = tr.run_id
-    (run_dir / TRACKED).write_text(json.dumps({"mlflow_run_id": run_id, "uri": cfg.tracking.resolved_uri()}, indent=2))
-    return run_id
+            "judged": meta.get("judged"), "data": Path(cfg.data).name, "condition_repeats_total": total,
+        },
+        tags={
+            "experiment": "E0.0", "run_dir": str(run_dir), "git_commit": prov.get("git_commit"),
+            "git_dirty": prov.get("git_dirty"), "host": prov.get("host"),
+        },
+    )
+    add_point(parent.series, "progress.repeats_done", done, done)
+    add_point(parent.series, "progress.fraction", done, done / total if total else 0.0)
+    for model, secs in timings.items():
+        add_point(parent.series, f"translate_s.{model}", 0, secs)
+    return Snapshot(parent=parent, children=children)
+
+
+def _port_free(host: str, port: int) -> bool:
+    import socket  # noqa: PLC0415
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def preflight(cfg: Config, *, judge: bool) -> None:
+    """Fail fast on anything checkable before a run: one error listing every problem.
+
+    Server problems with MLflow are not errors here: LiveRun warns and degrades.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    # Data
+    data = Path(cfg.data)
+    if not data.is_file():
+        errors.append(f"data file {data} does not exist")
+    else:
+        try:
+            obs = load_jsonl(data)
+        except json.JSONDecodeError as exc:
+            obs = []
+            errors.append(f"data file {data} is not valid JSONL: {exc}")
+        if not obs and data.is_file() and not errors:
+            errors.append(f"data file {data} has no observations")
+        missing = [o.get("id", f"#{i}") for i, o in enumerate(obs) if "id" not in o or "content" not in o]
+        if missing:
+            errors.append(f"observations missing 'id' or 'content': {missing[:5]}")
+        if judge and cfg.judge and any(not o.get("qa") for o in obs):
+            warnings.append("some observations have no 'qa'; they add nothing to fidelity")
+
+    # Output dir: writable, without creating anything if the checks fail.
+    out = Path(cfg.out_dir).resolve()
+    existing = next((p for p in (out, *out.parents) if p.exists()), None)
+    if existing is None or not existing.is_dir() or not os.access(existing, os.W_OK | os.X_OK):
+        errors.append(f"cannot write to out_dir {cfg.out_dir} ({existing} is not a writable directory)")
+
+    # Endpoints
+    if judge and not cfg.judge:
+        warnings.append("no judge configured; the fidelity column will be empty")
+    names = [*cfg.model_names(), *([cfg.judge] if judge and cfg.judge else [])]
+    commands: dict[str, str] = {}
+    for name in dict.fromkeys(names):
+        ep = cfg.endpoint(name)
+        if ep.api_key_env and not os.environ.get(ep.api_key_env):
+            errors.append(f"[{name}] needs ${ep.api_key_env} (set it in .env)")
+        if not ep.serve:
+            continue
+        try:
+            commands.setdefault(shlex.join(find_server(ep.serve.bin)), name)
+        except ServerError as exc:
+            errors.append(f"[{name}] {exc}")
+        if ep.serve.model_path and not Path(ep.serve.model_path).expanduser().is_file():
+            errors.append(f"[{name}] model_path {ep.serve.model_path} does not exist")
+        if ep.serve.port and not _port_free(ep.serve.host, ep.serve.port):
+            errors.append(f"[{name}] port {ep.serve.port} is already in use")
+
+    # Tracking: only a missing URI is fatal; server problems are handled live.
+    if cfg.tracking.enabled and not cfg.tracking.resolved_uri():
+        errors.append(
+            "tracking is on but no MLflow URI is set: set MLFLOW_TRACKING_URI (e.g. in .env) or "
+            "tracking.uri, or pass --no-track and upload later with `track`"
+        )
+
+    for w in warnings:
+        click.echo(f"warning: {w}", err=True)
+    if errors:
+        raise click.ClickException("pre-flight checks failed:\n  - " + "\n  - ".join(errors))
+    for cmd in commands:
+        click.echo(f"model server command: {cmd}")
 
 
 @cli.command()
 @click.argument("run_dir", type=click.Path(exists=True, file_okay=False))
-@click.option("--uri", help="MLflow tracking URI; default the run's config, then $MLFLOW_TRACKING_URI.")
-@click.option("--force", is_flag=True, help="Log again even if this run dir was already logged.")
+@click.option("--uri", help="MLflow tracking URI; default $MLFLOW_TRACKING_URI, then the run's config.")
+@click.option("--force", is_flag=True, help="Log to a new MLflow run even if this run dir is already logged.")
 def track(run_dir: str, uri: str | None, force: bool) -> None:
-    """Upload a finished run dir to MLflow (for --no-track runs or failed logging)."""
+    """Upload a run dir to MLflow: --no-track runs, or ones whose live logging was cut short.
+
+    Continues the run's existing MLflow run when it has one, logging only what is missing.
+    """
     d = Path(run_dir)
-    if (d / TRACKED).exists() and not force:
-        prev = json.loads((d / TRACKED).read_text())
-        raise click.ClickException(f"already logged as MLflow run {prev['mlflow_run_id']}; pass --force to log again")
+    ledger = d / LEDGER
+    if ledger.exists():
+        led = json.loads(ledger.read_text())
+        if led.get("finished") and not force:
+            raise click.ClickException(f"already logged as MLflow run {led.get('run_id')}; pass --force to log again")
+        if force:
+            ledger.rename(d / f"{LEDGER}.{time.strftime('%Y%m%d-%H%M%S')}.bak")
     if not (d / "summary.md").exists():
         raise click.ClickException(f"{d} has no summary.md; finish the run (or `score` it) first")
     cfg = Config.load(d / "config.yaml")
     cfg.tracking.enabled = True
     if uri:
         cfg.tracking.uri = uri
+    target = cfg.tracking.resolved_uri()
+    if not target:
+        raise click.ClickException("no MLflow URI: pass --uri or set MLFLOW_TRACKING_URI (e.g. in .env)")
+    status, detail = probe(target, cfg.tracking.experiment or DEFAULT_EXPERIMENT)
+    if status is not Status.OK:
+        raise click.ClickException(f"MLflow at {target}: {detail}")
+    live = LiveRun(cfg.tracking, DEFAULT_EXPERIMENT, d, lambda: snapshot(cfg, d), system_metrics=False)
     try:
-        run_id = log_run(cfg, d)
+        live.start()
     except TrackingError as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(f"logged {d} to MLflow run {run_id}")
+    if not live.finish():
+        raise click.ClickException(f"could not log {d}: {live.reason}")
+    click.echo(f"logged {d} to MLflow run {live.run_id}" + (f": {live.run_url}" if live.run_url else ""))
 
 
 @cli.command()

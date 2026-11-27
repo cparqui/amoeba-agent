@@ -19,8 +19,9 @@ amoeba = "amoeba.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
-# MLflow tracking client for experiments (the server runs elsewhere).
-experiments = ["mlflow-skinny>=3.0", "python-dotenv>=1.0"]
+# MLflow tracking client for experiments (the server runs elsewhere), plus
+# psutil / nvidia-ml-py for its system metrics (CPU, memory, NVIDIA GPU).
+experiments = ["mlflow-skinny>=3.0", "python-dotenv>=1.0", "psutil>=5.9", "nvidia-ml-py>=12.0"]
 
 [tool.uv]
 default-groups = ["dev", "experiments"]
