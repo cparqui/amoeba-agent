@@ -55,6 +55,19 @@ def default_outputs() -> dict[type, Any]:
     }
 
 
+@pytest.fixture(autouse=True)
+def _no_dotenv(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a developer's real .env (MLflow URI, credentials) out of the tests.
+
+    Tests of the loader itself opt out with @pytest.mark.dotenv.
+    """
+    if request.node.get_closest_marker("dotenv"):
+        return
+    import experiments.translation.run as run
+
+    monkeypatch.setattr(run, "load_env", lambda path=None: None)
+
+
 @pytest.fixture
 def fake_llm() -> FakeLLM:
     return FakeLLM(default_outputs())

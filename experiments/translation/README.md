@@ -66,16 +66,13 @@ The defaults (5 endpoints less the judge, 3 syntaxes, 3 lexicon modes, 2 decodin
 
 ### Tracking
 
-Every pipeline run is tracked in MLflow by default, and tracking is required. Point it at your server once, either in your shell profile (applies to every experiment) or per config:
+Every pipeline run is tracked in MLflow by default, and tracking is required. Put the server and its login in the repo's `.env` file, which experiments load automatically at startup:
 
 ```bash
-export MLFLOW_TRACKING_URI=http://workstation:5000     # e.g. in ~/.bashrc
+cp .env.example .env      # then fill in MLFLOW_TRACKING_URI, _USERNAME, _PASSWORD
 ```
 
-```yaml
-tracking:
-  uri: http://workstation:5000
-```
+`.env` is git-ignored. Variables already set in your shell take precedence over it, and `--env-file PATH` (before the subcommand) loads a different file. The URI can also go in the config as `tracking.uri`, but keep the username and password out of `config.yaml` and out of the URI: the config is copied into every run dir and uploaded to MLflow.
 
 Before any model server starts, the pipeline checks the server's `/health`. If no URI is set or the server is unreachable, it stops within seconds and nothing has been run. To run without a server, pass `--no-track`. The run dir keeps everything, and `track` uploads it later:
 

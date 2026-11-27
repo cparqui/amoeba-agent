@@ -31,6 +31,7 @@ dev = [
 ]
 experiments = [
     { name = "mlflow-skinny" },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata]
@@ -45,7 +46,10 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8.0" }]
-experiments = [{ name = "mlflow-skinny", specifier = ">=3.0" }]
+experiments = [
+    { name = "mlflow-skinny", specifier = ">=3.0" },
+    { name = "python-dotenv", specifier = ">=1.0" },
+]
 
 [[package]]
 name = "amoeba-environments"

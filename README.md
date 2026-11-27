@@ -22,6 +22,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync --all-packages
+cp .env.example .env        # local settings and secrets for experiments (MLflow login, ...)
 uv run amoeba --help
 uv run pytest
 ```
