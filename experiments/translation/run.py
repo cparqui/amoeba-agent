@@ -31,6 +31,7 @@ import httpx
 import yaml
 from pydantic import BaseModel, Field
 
+from ..common.env import load_env
 from ..common.llama_server import ServerError, find_server, llama_server
 from ..common.tracking import TrackingConfig, TrackingError, check_ready, provenance, tracking
 from . import metrics
@@ -373,8 +374,14 @@ def condition_name(row: dict[str, Any]) -> str:
 
 
 @click.group()
-def cli() -> None:
+@click.option(
+    "--env-file", type=click.Path(exists=True, dir_okay=False),
+    help="Settings file to load; default the nearest .env from the working directory up.",
+)
+def cli(env_file: str | None) -> None:
     """E0.0: can off-the-shelf models translate observations into the internal language?"""
+    if loaded := load_env(env_file):
+        click.echo(f"settings: {loaded}", err=True)
 
 
 @cli.command()
