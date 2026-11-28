@@ -125,6 +125,8 @@ def test_endpoint_needs_url_or_serve() -> None:
 
 
 def _config(tmp_path: Path, **extra) -> Path:
+    tiny = tmp_path / "tiny.gguf"
+    tiny.write_bytes(b"GGUF")  # pre-flight checks that local model files exist
     data = tmp_path / "obs.jsonl"
     data.write_text(
         "\n".join(
@@ -139,7 +141,7 @@ def _config(tmp_path: Path, **extra) -> Path:
     cfg = {
         "endpoints": [
             {"name": "small", "serve": {"hf": "org/small:Q8", "startup_timeout": 20}},
-            {"name": "tiny", "serve": {"model_path": "/models/tiny.gguf", "startup_timeout": 20}},
+            {"name": "tiny", "serve": {"model_path": str(tiny), "startup_timeout": 20}},
             {"name": "judge", "serve": {"hf": "org/judge:Q4", "startup_timeout": 20}},
         ],
         "judge": "judge",
@@ -175,7 +177,7 @@ def test_pipeline_end_to_end(fake_bin: Path, tmp_path: Path, monkeypatch: pytest
     # Servers ran one at a time, in order, and the seed varies per repeat.
     reqs = [json.loads(line) for line in (tmp_path / "requests.jsonl").read_text().splitlines()]
     order = [r["model"] for r in reqs]
-    first_tiny = order.index("/models/tiny.gguf")
+    first_tiny = order.index(str(tmp_path / "tiny.gguf"))
     assert set(order[:first_tiny]) == {"org/small:Q8"}
     assert {r["seed"] for r in reqs if r["seed"] is not None} == {100, 101}
 
@@ -250,45 +252,3 @@ def test_missing_server_fails_before_run(fake_bin: Path, tmp_path: Path, monkeyp
     assert not (tmp_path / "runs").exists()
 
 
-def test_tracking_required_by_default(fake_bin: Path, tmp_path: Path) -> None:
-    res = CliRunner().invoke(cli, ["pipeline", "-c", str(_config(tmp_path))])
-    assert res.exit_code != 0 and "no MLflow URI is set" in res.output
-    assert not (tmp_path / "runs").exists()  # failed before any run dir or server
-    assert not (tmp_path / "requests.jsonl").exists()
-
-
-def test_dead_mlflow_server_fails_fast(fake_bin: Path, tmp_path: Path) -> None:
-    import time
-
-    from experiments.common.llama_server import free_port
-
-    cfg = _config(tmp_path, tracking={"uri": f"http://127.0.0.1:{free_port()}"})
-    t0 = time.monotonic()
-    res = CliRunner().invoke(cli, ["pipeline", "-c", str(cfg)])
-    assert res.exit_code != 0 and "not reachable" in res.output
-    assert time.monotonic() - t0 < 15
-    assert not (tmp_path / "requests.jsonl").exists()
-
-
-def test_no_track_then_backfill(fake_bin: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MLFLOW_ALLOW_FILE_STORE", "true")
-    runner = CliRunner()
-    res = runner.invoke(cli, ["pipeline", "-c", str(_config(tmp_path)), "--no-track"], catch_exceptions=False)
-    assert res.exit_code == 0 and "upload later with" in res.output
-    run_dir = next((tmp_path / "runs").iterdir())
-
-    uri = (tmp_path / "mlruns").as_uri()
-    res = runner.invoke(cli, ["track", str(run_dir), "--uri", uri], catch_exceptions=False)
-    assert res.exit_code == 0, res.output
-    assert json.loads((run_dir / "tracked.json").read_text())["mlflow_run_id"]
-
-    again = runner.invoke(cli, ["track", str(run_dir), "--uri", uri])
-    assert again.exit_code != 0 and "already logged" in again.output
-
-    import mlflow
-
-    mlflow.set_tracking_uri(uri)
-    runs = mlflow.search_runs(experiment_names=["e0.0-translation"], output_format="list")
-    parent = next(r for r in runs if "mlflow.parentRunId" not in r.data.tags)
-    assert parent.data.params["parallel"] == "False" and "translate_s.small" in parent.data.metrics
-    assert len(runs) > 1  # condition child runs

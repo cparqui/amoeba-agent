@@ -72,10 +72,17 @@ lexicon_cap: 150      # most recent symbols shown to the perceiver
 # A few starting predicates for the seeded modes. Everything else is learned.
 seed_lexicon: [self, at_time, at_position, has_property, part_of, moved, sees, touches]
 
-# MLflow tracking: on by default and required. Set the URI and login in .env
-# (see .env.example), or the URI here;
-# the pipeline stops before starting anything if neither is set or the server is
-# down. `pipeline --no-track` skips it for one run; `track <run dir>` uploads later.
+# MLflow tracking: on by default and logged live as results come in. Set the URI
+# and login in .env (see .env.example), or the URI here. A missing URI is a
+# pre-flight error; a server that is down, or rejects the login, only warns and
+# the run continues (see the README). `pipeline --no-track` skips tracking for
+# one run; `track <run dir>` uploads or completes a run later.
 tracking:
   # uri: http://workstation:5000
   experiment: e0.0-translation
+  # system_metrics: true            # CPU / memory / disk / network / GPU under system/
+  # system_metrics_interval_s: 10
+  # retry_interval_s: 30            # first retry after an outage; doubles each time
+  # retry_max_interval_s: 600
+  # retry_max_attempts: 20          # then gives up until the final attempt at the end
+  # request_timeout_s: 30

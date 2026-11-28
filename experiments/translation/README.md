@@ -74,18 +74,40 @@ cp .env.example .env      # then fill in MLFLOW_TRACKING_URI, _USERNAME, _PASSWO
 
 `.env` is git-ignored. Variables already set in your shell take precedence over it, and `--env-file PATH` (before the subcommand) loads a different file. The URI can also go in the config as `tracking.uri`, but keep the username and password out of `config.yaml` and out of the URI: the config is copied into every run dir and uploaded to MLflow.
 
-Before any model server starts, the pipeline checks the server's `/health`. If no URI is set or the server is unreachable, it stops within seconds and nothing has been run. To run without a server, pass `--no-track`. The run dir keeps everything, and `track` uploads it later:
+**Logging is live.** The MLflow run opens when the pipeline starts and prints a link to it. Each condition gets a nested run (`model/syntax/lexicon/decoding`, plus `raw-input` for the judge's score on the original observations). Its metrics are logged as each repeat finishes, at step = repeats finished, so the charts fill in while the run goes. `fidelity` is added at the end, once the judge has run. The parent run holds the condition grid as params, provenance as tags, `progress.fraction`, `translate_s.<model>`, and system metrics under `system/` (CPU, memory, disk, network, and NVIDIA GPU via `nvidia-ml-py`). The run dir is attached as artifacts at the end.
+
+**When MLflow misbehaves, the run keeps going.** The run dir is always the source of truth:
+
+| Problem | What happens |
+|---|---|
+| No URI set | Pre-flight error before anything starts (or pass `--no-track`) |
+| Wrong or missing login (401) | One warning; tracking is off for this run |
+| `Invalid Host header` (403) | One warning; tracking is off (add the host *with its port* to `--allowed-hosts`, e.g. `localhost:*`) |
+| User can read but not write (403) | One warning; tracking is off |
+| Server down, refusing, timing out or 5xx | One warning, then quiet retries with backoff (30 s doubling to 10 min, up to 20 attempts). One line when it's back, and everything missed is logged then. One line if it gives up; a final attempt is always made at the end of the run |
+
+The pre-flight check calls a real API endpoint with your credentials. `/health` skips the login and host checks, so a server that rejects every logging call would still look healthy there.
+
+A run that ends untracked or partly tracked prints the command to upload it. `track` continues the run's existing MLflow run and logs only what's missing, and `--resume` does the same:
 
 ```bash
 uv run python -m experiments.translation pipeline -c experiments/translation/config.yaml --no-track
 uv run python -m experiments.translation track runs/e0.0/<stamp>       # once MLflow is up
 ```
 
-Logging happens after the run finishes, so an MLflow outage during a long run loses nothing. The pipeline prints the `track` command to retry. `track` refuses a run dir it has already logged (`tracked.json` records the MLflow run id) unless you pass `--force`.
+`mlflow.json` in the run dir is the ledger that makes this work: it holds the MLflow run ids and the highest step logged for each metric. `track` refuses a run that is already completely logged unless you pass `--force`, which starts a new MLflow run.
 
-Each run becomes one MLflow run with the condition grid as params and git commit, host and run dir as tags. It has one nested run per condition (`model/syntax/lexicon/decoding`, plus `raw-input`) holding that row's metrics, so conditions can be compared side by side in the MLflow UI. The whole run dir is attached as artifacts. The client is `mlflow-skinny`, installed by `uv sync`. An MLflow server started with `--artifacts-destination <local dir>` stores artifacts on its own disk, so no S3 is needed.
+Retry timing, system metrics and request timeouts are set under `tracking:` in the config (see `config.example.yaml`). The client is `mlflow-skinny`, installed by `uv sync`. An MLflow server started with `--artifacts-destination <local dir>` stores artifacts on its own disk, so no S3 is needed.
 
-Outputs in the run dir: `results.jsonl` (one record per call: raw output, parsed form, facts, symbols, latency), `judge.jsonl`, `summary.csv`, `summary.md`, `provenance.json` (git commit and dirty flag, host, platform, Python, package versions), `servers.json` (per model: exact command, server version, startup time, `/props`) and `servers/<model>.log`. The results file is also the dataset for fine-tuning a perceiver later.
+**Other pre-flight checks** run before anything starts, and all problems are reported at once:
+- the data file exists and parses;
+- `out_dir` is writable;
+- every managed model has a server command;
+- local `model_path` files exist;
+- fixed ports are free;
+- hosted endpoints have their `api_key_env` set.
+
+Outputs in the run dir: `results.jsonl` (one record per call: raw output, parsed form, facts, symbols, latency), `judge.jsonl`, `summary.csv`, `summary.md`, `provenance.json` (git commit and dirty flag, host, platform, Python, package versions), `servers.json` (per model: exact command, server version, startup time, `/props`), `servers/<model>.log`, `timings.json` (translate time per model), `run.json` (pipeline options) and `mlflow.json` (tracking ledger). The results file is also the dataset for fine-tuning a perceiver later.
 
 ## Notes
 
